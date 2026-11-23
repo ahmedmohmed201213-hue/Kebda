@@ -1,0 +1,485 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>أسطورة الكبدة والسجق 3D</title>
+
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#171717;font-family:Arial;color:white}
+canvas{display:block}
+#hud{
+position:fixed;top:12px;left:12px;right:12px;
+display:flex;justify-content:space-between;gap:8px;
+z-index:5;pointer-events:none
+}
+.stat{
+background:#171717eF;border:1px solid #d4af37;
+border-radius:13px;padding:10px 14px;font-weight:bold;
+font-size:clamp(12px,2vw,19px)
+}
+#message{
+position:fixed;top:85px;left:50%;transform:translateX(-50%);
+background:#171717eF;border:1px solid #d4af37;
+padding:12px 20px;border-radius:15px;color:#ffd477;
+z-index:5;white-space:nowrap;font-weight:bold
+}
+#buttons{
+position:fixed;bottom:15px;left:0;right:0;
+display:flex;justify-content:center;gap:10px;
+z-index:5;padding:0 8px
+}
+button{
+background:linear-gradient(#a6532c,#552714);
+border:2px solid #d4af58;color:white;
+border-radius:16px;padding:15px 18px;
+font-size:clamp(12px,2vw,20px);font-weight:bold
+}
+button:active{transform:scale(.94)}
+#start{
+position:fixed;inset:0;background:#090909ed;
+z-index:10;display:flex;align-items:center;
+justify-content:center;text-align:center
+}
+#startBox{
+width:90%;max-width:400px;padding:28px;
+background:#211a15;border:2px solid #d4af37;
+border-radius:25px
+}
+#start h1{color:#ffd477}
+#start button{font-size:20px}
+#loading{
+position:fixed;bottom:90px;left:50%;
+transform:translateX(-50%);
+color:#ffd477;z-index:4;font-size:13px
+}
+@media(orientation:portrait){
+#rotate{
+position:fixed;inset:0;background:#111e;
+z-index:20;display:flex;align-items:center;
+justify-content:center;color:#ffd477;font-size:22px
+}
+}
+@media(orientation:landscape){#rotate{display:none}}
+</style>
+
+<script type="importmap">
+{
+ "imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+ }
+}
+</script>
+</head>
+
+<body>
+
+<div id="rotate">📱 اقلب الموبايل بالعرض</div>
+
+<div id="hud">
+ <div class="stat">📦 المخزون: <span id="stock">20</span></div>
+ <div class="stat">⭐ المستوى: <span id="level">1</span></div>
+ <div class="stat">💰 <span id="money">100</span> جنيه</div>
+</div>
+
+<div id="message">أهلاً بيك يا معلم 🔥</div>
+<div id="loading">جاري تحميل موديل العربية...</div>
+
+<div id="buttons">
+ <button onclick="cook('liver')">🥩 اطبخ كبدة</button>
+ <button onclick="cook('sausage')">🌭 اطبخ سجق</button>
+ <button onclick="serve()">🛍️ سلّم الطلب</button>
+ <button onclick="upgrade()">⬆️ تطوير</button>
+</div>
+
+<div id="start">
+ <div id="startBox">
+  <h1>🔥 أسطورة الكبدة والسجق</h1>
+  <p>افتح عربيتك وابدأ مشروعك في الشارع المصري!</p>
+  <p>اسحب الشاشة لتحريك الكاميرا.</p>
+  <button onclick="startGame()">ابدأ اللعبة</button>
+ </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+
+let scene,camera,renderer,controls;
+let money=100,level=1,stock=20,cooked=0;
+let started=false;
+let smoke=[];
+let foodGroup=new THREE.Group();
+let cartGroup=new THREE.Group();
+let customers=[];
+
+const CART_URL=
+'https://tevy.dev/models/street-food-stall-cart/v1/lod0.glb';
+
+// ضع رابط موديل الشخص بصيغة GLB هنا بعد توفيره
+const CUSTOMER_MODEL_URL='';
+
+const loader=new GLTFLoader();
+
+const ui={
+ money:document.getElementById('money'),
+ level:document.getElementById('level'),
+ stock:document.getElementById('stock'),
+ message:document.getElementById('message'),
+ loading:document.getElementById('loading')
+};
+
+function say(text){
+ ui.message.textContent=text;
+}
+
+function mat(color,roughness=.6,metalness=0){
+ return new THREE.MeshStandardMaterial({
+  color,roughness,metalness
+ });
+}
+
+function addBox(parent,w,h,d,x,y,z,color){
+ const mesh=new THREE.Mesh(
+  new THREE.BoxGeometry(w,h,d),mat(color)
+ );
+ mesh.position.set(x,y,z);
+ mesh.castShadow=true;
+ mesh.receiveShadow=true;
+ parent.add(mesh);
+ return mesh;
+}
+
+function setup(){
+ scene=new THREE.Scene();
+ scene.background=new THREE.Color(0x999b9c);
+ scene.fog=new THREE.Fog(0x999b9c,30,85);
+
+ camera=new THREE.PerspectiveCamera(
+  48,innerWidth/innerHeight,.1,200
+ );
+ camera.position.set(9,7,11);
+
+ renderer=new THREE.WebGLRenderer({
+  antialias:true,powerPreference:'high-performance'
+ });
+ renderer.setSize(innerWidth,innerHeight);
+ renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+ renderer.shadowMap.enabled=true;
+ renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+ renderer.toneMapping=THREE.ACESFilmicToneMapping;
+ renderer.toneMappingExposure=1.2;
+ document.body.appendChild(renderer.domElement);
+
+ controls=new OrbitControls(camera,renderer.domElement);
+ controls.target.set(0,1.5,0);
+ controls.enableDamping=true;
+ controls.maxPolarAngle=Math.PI/2.05;
+ controls.minDistance=4;
+ controls.maxDistance=22;
+
+ const ambient=new THREE.HemisphereLight(
+  0xddeaff,0x55402c,2.1
+ );
+ scene.add(ambient);
+
+ const sun=new THREE.DirectionalLight(0xffdfb0,3.1);
+ sun.position.set(-8,15,9);
+ sun.castShadow=true;
+ sun.shadow.mapSize.set(2048,2048);
+ sun.shadow.camera.left=-20;
+ sun.shadow.camera.right=20;
+ sun.shadow.camera.top=20;
+ sun.shadow.camera.bottom=-20;
+ scene.add(sun);
+
+ const lamp=new THREE.PointLight(0xffa33b,30,14);
+ lamp.position.set(0,5,1);
+ scene.add(lamp);
+
+ createStreet();
+ loadCart();
+ createGrill();
+ createFood();
+ createCustomers();
+
+ window.addEventListener('resize',resize);
+ animate();
+}
+
+function createStreet(){
+ const ground=new THREE.Mesh(
+  new THREE.PlaneGeometry(150,150),
+  mat(0x46362b,.95)
+ );
+ ground.rotation.x=-Math.PI/2;
+ ground.position.y=-.08;
+ ground.receiveShadow=true;
+ scene.add(ground);
+
+ const road=addBox(scene,100,.06,13,0,-.02,-12,0x252525);
+
+ for(let x=-45;x<50;x+=10){
+  addBox(scene,4,.04,.12,x,.02,-12,0xe2d5ac);
+ }
+
+ // مباني خلفية
+ for(let i=0;i<9;i++){
+  const x=(i-4)*9;
+  const h=5+Math.random()*3;
+
+  addBox(scene,8,h,3,x,h/2,-22,
+   i%2?0x625348:0x4d4946);
+
+  for(let y=1.5;y<h-1;y+=2){
+   addBox(scene,1.1,1.2,.08,x-2,y,-20.4,0x9a7045);
+   addBox(scene,1.1,1.2,.08,x+2,y,-20.4,0x9a7045);
+  }
+ }
+
+ // أعمدة إنارة
+ for(const x of [-12,12]){
+  const pole=new THREE.Mesh(
+   new THREE.CylinderGeometry(.07,.1,6,16),
+   mat(0x222222,.35,.6)
+  );
+  pole.position.set(x,3,-7);
+  pole.castShadow=true;
+  scene.add(pole);
+
+  const bulb=new THREE.PointLight(0xffd49a,15,15);
+  bulb.position.set(x,6,-7);
+  scene.add(bulb);
+
+  const ball=new THREE.Mesh(
+   new THREE.SphereGeometry(.22,20,16),
+   new THREE.MeshBasicMaterial({color:0xffdfad})
+  );
+  ball.position.copy(bulb.position);
+  scene.add(ball);
+ }
+}
+
+function loadCart(){
+ loader.load(
+  CART_URL,
+  gltf=>{
+   const model=gltf.scene;
+   const bounds=new THREE.Box3().setFromObject(model);
+   const size=bounds.getSize(new THREE.Vector3());
+
+   const scale=5/Math.max(size.x,size.z);
+   model.scale.setScalar(scale);
+
+   const newBounds=new THREE.Box3().setFromObject(model);
+   const center=newBounds.getCenter(new THREE.Vector3());
+
+   model.position.x-=center.x;
+   model.position.z-=center.z;
+   model.position.y-=newBounds.min.y;
+
+   model.traverse(obj=>{
+    if(obj.isMesh){
+     obj.castShadow=true;
+     obj.receiveShadow=true;
+    }
+   });
+
+   cartGroup.add(model);
+   scene.add(cartGroup);
+   ui.loading.textContent='تم تحميل العربية 3D';
+   setTimeout(()=>ui.loading.style.display='none',2500);
+  },
+  undefined,
+  error=>{
+   ui.loading.textContent='تعذر تحميل موديل العربية. تحقق من الإنترنت.';
+   console.error(error);
+  }
+ );
+}
+
+function createGrill(){
+ const grill=addBox(scene,2.4,.16,1.35,0,1.55,0,0x292d30);
+ grill.material.metalness=.8;
+ grill.material.roughness=.22;
+
+ const edge=addBox(scene,2.55,.12,.12,0,1.66,.68,0x858585);
+ edge.material.metalness=.8;
+ edge.material.roughness=.2;
+
+ const fire=new THREE.PointLight(0xff5b17,4,5);
+ fire.position.set(0,1.9,0);
+ scene.add(fire);
+}
+
+function createFood(){
+ for(let i=0;i<9;i++){
+  const piece=new THREE.Mesh(
+   new THREE.BoxGeometry(
+    .18+Math.random()*.12,
+    .09,
+    .13+Math.random()*.12
+   ),
+   mat(0x81351f,.4)
+  );
+
+  piece.position.set(
+   -.8+Math.random()*1.6,
+   1.68,
+   -.4+Math.random()*.8
+  );
+  piece.rotation.y=Math.random()*3;
+  piece.castShadow=true;
+  foodGroup.add(piece);
+ }
+
+ for(let i=0;i<4;i++){
+  const sausage=new THREE.Mesh(
+   new THREE.CapsuleGeometry(.09,.55,8,16),
+   mat(0x9b3d22,.4)
+  );
+  sausage.rotation.z=Math.PI/2;
+  sausage.position.set(-.6+i*.4,1.8,.3);
+  foodGroup.add(sausage);
+ }
+ scene.add(foodGroup);
+}
+
+function createCustomers(){
+ if(!CUSTOMER_MODEL_URL){
+  say('العربية جاهزة. نحتاج موديل GLB بشري لإضافة الزبائن الواقعيين.');
+  return;
+ }
+
+ loader.load(CUSTOMER_MODEL_URL,gltf=>{
+  const first=gltf.scene;
+  for(const x of [-3.5,3.5]){
+   const person=first.clone(true);
+   person.position.set(x,0,3);
+   person.scale.setScalar(1);
+   person.traverse(o=>{
+    if(o.isMesh)o.castShadow=true;
+   });
+   scene.add(person);
+   customers.push(person);
+  }
+ },undefined,error=>{
+  console.error('Customer model error:',error);
+ });
+}
+
+function addSmoke(){
+ for(let i=0;i<4;i++){
+  const mesh=new THREE.Mesh(
+   new THREE.SphereGeometry(.12,12,12),
+   new THREE.MeshBasicMaterial({
+    color:0xc8c8c8,
+    transparent:true,opacity:.28
+   })
+  );
+  mesh.position.set(
+   (Math.random()-.5)*1.3,
+   1.95,
+   (Math.random()-.5)*.7
+  );
+  scene.add(mesh);
+  smoke.push({mesh,life:1});
+ }
+}
+
+function updateSmoke(){
+ for(let i=smoke.length-1;i>=0;i--){
+  const s=smoke[i];
+  s.life-=.012;
+  s.mesh.position.y+=.025;
+  s.mesh.scale.multiplyScalar(1.01);
+  s.mesh.material.opacity=s.life*.28;
+
+  if(s.life<=0){
+   scene.remove(s.mesh);
+   s.mesh.geometry.dispose();
+   s.mesh.material.dispose();
+   smoke.splice(i,1);
+  }
+ }
+}
+
+window.cook=function(type){
+ if(!started)return;
+
+ if(stock<=0){
+  say('المخزون خلص! اشتري مكونات.');
+  return;
+ }
+
+ stock--;
+ cooked++;
+ ui.stock.textContent=stock;
+
+ addSmoke();
+ say(type==='liver'?
+  '🥩 الكبدة بتتشوي على الصاج!':
+  '🌭 السجق بيتحمر!');
+};
+
+window.serve=function(){
+ if(!started)return;
+
+ if(cooked<2){
+  say('اطبخ مكونين على الأقل قبل التسليم.');
+  return;
+ }
+
+ const reward=25+(level*5);
+ money+=reward;
+ cooked=0;
+
+ ui.money.textContent=money;
+ say('✅ الطلب اتسلم! كسبت '+reward+' جنيه');
+};
+
+window.upgrade=function(){
+ if(!started)return;
+
+ const cost=level*100;
+
+ if(money<cost){
+  say('محتاج '+cost+' جنيه عشان تطور العربية.');
+  return;
+ }
+
+ money-=cost;
+ level++;
+ ui.money.textContent=money;
+ ui.level.textContent=level;
+
+ say('⭐ تم تطوير العربية للمستوى '+level);
+};
+
+window.startGame=function(){
+ started=true;
+ document.getElementById('start').style.display='none';
+ say('🔥 يلا افتح الشغل يا معلم!');
+};
+
+function resize(){
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+}
+
+function animate(){
+ requestAnimationFrame(animate);
+ controls.update();
+ updateSmoke();
+ renderer.render(scene,camera);
+}
+
+setup();
+</script>
+</body>
+</html>
